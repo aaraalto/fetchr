@@ -1,75 +1,101 @@
-1. High-Level Vision
-   The goal is to create a unified Asset Engine written in Rust that can be accessed via a terminal (CLI) or a graphical interface (macOS Desktop). The system uses AI to bridge the gap between "what a human wants" and "how a search engine works."
+# Fetchr Architecture — MVP
 
-2. The Workspace Structure
-   We utilize a Rust Workspace to maintain a "Single Source of Truth."
+## 1. Goal
+Build a CLI tool that uses AI to expand a natural language prompt into optimized search queries, fetches images from a single API source, and downloads them locally.
 
-crates/core: The "Brain." Contains logic for API authentication, AI prompt expansion, image scraping, and file system management.
+**Ship CLI first. Desktop comes later.**
 
-crates/cli: The "Power Tool." A thin wrapper around core using clap for command-line arguments.
+## 2. Project Structure
 
-crates/desktop: The "Gallery." A Tauri-based application that uses core as its backend and React/Tailwind for a premium macOS-style UI.
+```
+fetchr/
+├── Cargo.toml          # Single crate for MVP (no workspace)
+├── src/
+│   ├── main.rs         # CLI entry point (clap)
+│   ├── ai.rs           # AI prompt expansion
+│   ├── search.rs       # Image search (Unsplash API)
+│   ├── download.rs     # Async image downloads
+│   └── config.rs       # Config file handling
+└── docs/
+```
 
-3. The Logic Flow (The "Search-to-Disk" Pipeline)
-   When a user provides an input (e.g., "Modernist Braun Clock"), the system follows this sequence:
+**Why no workspace?** A workspace adds complexity. Start with one crate. Split later if needed.
 
-Intent Expansion (AI): The core crate sends the prompt to an LLM. It returns a JSON object containing optimized search strings (e.g., "Braun AB1 clock high-res transparent", "Dieter Rams clock design png").
+## 3. Core Flow
 
-Asset Aggregation: The engine fires concurrent requests to:
+```
+User Prompt → AI Expansion → Search API → Download Images
+     ↓              ↓             ↓            ↓
+"Braun clock"  [3 queries]   [results]    ./downloads/
+```
 
-Public APIs: Unsplash, Pixabay, Brandfetch.
+1. **AI Expansion**: Send prompt to OpenAI/Anthropic. Get back 3 optimized search strings.
+2. **Search**: Query Unsplash API with each string. Collect results.
+3. **Download**: Async download top N images to local folder.
 
-Search Engines: Google Custom Search or Bing Image Search.
+## 4. MVP Tech Stack
 
-Scrapers: Targeted scraping for specific design archives.
+| Component | Choice | Reason |
+|-----------|--------|--------|
+| Async runtime | `tokio` | Industry standard |
+| HTTP client | `reqwest` | Simple, async |
+| CLI parser | `clap` (derive) | Clean, minimal boilerplate |
+| AI client | `reqwest` + raw API | Avoid heavy SDK dependencies |
+| Serialization | `serde` + `serde_json` | Required for API responses |
+| Progress bars | `indicatif` | Good UX during downloads |
+| Config | `dirs` + `serde` | Simple TOML file in ~/.config/fetchr/ |
 
-Normalization: The engine cleans the results, removes duplicates, and extracts high-resolution direct links.
+## 5. API Source: Unsplash
 
-Delivery:
+For MVP, use **Unsplash** only:
+- Free tier: 50 requests/hour (enough for testing)
+- High-quality images
+- Simple API: `GET /search/photos?query=...`
+- Returns direct download URLs
 
-CLI: Prints a list or auto-downloads to a specified folder.
+**Do NOT add more sources until Unsplash works end-to-end.**
 
-Desktop: Populates a React-based CSS Grid with lazy-loading thumbnails.
+## 6. Configuration
 
-4. Technical Specifications
-   Core Engine (Rust)
+Store config in `~/.config/fetchr/config.toml`:
 
-Networking: reqwest for HTTP requests.
+```toml
+[keys]
+openai = "sk-..."
+unsplash = "..."
 
-Async Runtime: tokio for handling multiple downloads and API calls simultaneously.
+[defaults]
+limit = 5
+output_dir = "./downloads"
+```
 
-AI Integration: genai or direct OpenAI/Ollama bindings.
+**No keychain for MVP.** A plaintext TOML file is fine for a personal dev tool. Add secure storage later if distributing publicly.
 
-Serialization: serde for handling JSON data from various APIs.
+## 7. Error Handling
 
-Desktop UI (Tauri + Frontend)
+Keep it simple:
+- Use `anyhow` for error propagation
+- Print actionable messages to stderr
+- Exit with non-zero code on failure
 
-Framework: Tauri 2.0 (Native WebKit).
+## 8. What's Deferred (Post-MVP)
 
-Frontend: React with Vite.
+| Feature | Why Deferred |
+|---------|--------------|
+| Desktop app (Tauri) | Massive scope; ship CLI first |
+| Plugin/trait system | No need until 2+ sources exist |
+| SQLite caching | Optimize later if API limits hurt |
+| Keychain storage | Only needed for public distribution |
+| Multiple API sources | Get one working first |
+| Interactive TUI picker | Start with simple numbered list |
 
-Styling: Tailwind CSS + shadcn/ui for that "Apple-like" aesthetic.
+## 9. MVP Definition of Done
 
-Inter-Process Communication (IPC): Tauri "commands" will invoke Rust functions in the core crate.
+The MVP is complete when:
+- [ ] `af find "Braun clock"` expands prompt via AI
+- [ ] Searches Unsplash with expanded queries
+- [ ] Downloads top 5 images to `./downloads/`
+- [ ] Shows progress bars during download
+- [ ] `af config set-key openai <KEY>` saves to config file
 
-CLI (Clap)
-
-Interface: clap for argument parsing.
-
-UX: indicatif for beautiful progress bars during downloads.
-
-Formatting: colored for readable terminal output.
-
-5. Security & Persistence
-   Keyring: Use the keyring-rs crate to securely store API keys (OpenAI, Google) in the macOS Keychain.
-
-Caching: A local SQLite database (via rusqlite) will store metadata of previously found assets to prevent redundant API calls.
-
-6. Future-Proofing (The "Asset Plugins")
-   The core crate should implement a Source trait. This allows you or contributors to add new image sources (like "Pinterest" or "Adobe Stock") simply by creating a new file that follows the trait's rules without touching the main logic.
-
-Rust
-pub trait AssetSource {
-fn search(&self, query: &str) -> Vec<AssetResult>;
-fn download(&self, asset: &AssetResult) -> Result<PathBuf, Error>;
-}
+That's it. Ship this, then iterate.

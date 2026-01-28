@@ -32,30 +32,28 @@ fn print_banner() {
 }
 
 #[derive(Parser)]
-#[command(name = "af")]
-#[command(about = "AI-powered image asset fetcher")]
+#[command(name = "fetchr")]
+#[command(about = "AI-powered image asset fetcher - retrieve multiple assets at once")]
+#[command(version = VERSION)]
 struct Cli {
+    /// Asset descriptions (one image will be fetched per query)
+    #[arg(required_unless_present = "command")]
+    queries: Vec<String>,
+
+    /// Output directory
+    #[arg(short, long, default_value = "downloads")]
+    output: String,
+
+    /// Skip confirmation and download immediately
+    #[arg(short = 'y', long)]
+    yes: bool,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// AI-powered image search - fetch the best image for each query
-    Find {
-        /// Asset descriptions (one image will be fetched per query)
-        #[arg(required = true)]
-        queries: Vec<String>,
-
-        /// Output directory
-        #[arg(short, long, default_value = "downloads")]
-        output: String,
-
-        /// Skip confirmation and download immediately
-        #[arg(short = 'y', long)]
-        yes: bool,
-    },
-
     /// Manage configuration
     Config {
         #[command(subcommand)]
@@ -81,15 +79,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Find {
-            queries,
-            output,
-            yes,
-        } => {
-            print_banner();
-            cmd_find(&queries, &output, yes).await?;
-        }
-        Commands::Config { action } => match action {
+        Some(Commands::Config { action }) => match action {
             ConfigAction::SetKey { provider, key } => {
                 config::set_key(&provider, &key)?;
                 println!("Saved {} key", provider);
@@ -98,6 +88,15 @@ async fn main() -> Result<()> {
                 config::show()?;
             }
         },
+        None => {
+            if cli.queries.is_empty() {
+                println!("Usage: fetchr <QUERIES>... [-o <OUTPUT>] [-y]");
+                println!("\nRun 'fetchr --help' for more information.");
+                return Ok(());
+            }
+            print_banner();
+            cmd_find(&cli.queries, &cli.output, cli.yes).await?;
+        }
     }
 
     Ok(())

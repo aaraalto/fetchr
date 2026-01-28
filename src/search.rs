@@ -45,7 +45,7 @@ pub async fn search_images(
         .keys
         .serper
         .as_ref()
-        .context("Serper API key not set. Run: af config set-key serper <KEY>")?;
+        .context("Serper API key not set. Run: fetchr config set-key serper <KEY>")?;
 
     let client = reqwest::Client::new();
     let mut all_results: Vec<ImageResult> = Vec::new();

@@ -50,7 +50,7 @@ pub async fn expand_prompt(prompt: &str, config: &Config) -> Result<Vec<String>>
         .keys
         .gemini
         .as_ref()
-        .context("Gemini API key not set. Run: af config set-key gemini <KEY>")?;
+        .context("Gemini API key not set. Run: fetchr config set-key gemini <KEY>")?;
 
     let client = reqwest::Client::new();
 

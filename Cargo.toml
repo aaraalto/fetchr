@@ -10,7 +10,7 @@ keywords = ["cli", "ai", "images", "assets", "search"]
 categories = ["command-line-utilities"]
 
 [[bin]]
-name = "af"
+name = "fetchr"
 path = "src/main.rs"
 
 [dependencies]

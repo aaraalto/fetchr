@@ -66,51 +66,50 @@ export SERPER_API_KEY=your_serper_key
 
 ## Common Commands
 
-### Find Images
+### Fetch Images
 
 ```bash
 # Fetch a single asset
-af find "BMW logo transparent"
+fetchr "BMW logo transparent"
 
 # Fetch multiple assets at once
-af find "Apple logo" "Google logo" "Microsoft logo"
+fetchr "Apple logo" "Google logo" "Microsoft logo"
 
 # Skip confirmation prompt
-af find "sunset wallpaper" "ocean waves" -y
+fetchr "sunset wallpaper" "ocean waves" -y
 
 # Custom output directory
-af find "cat photo" "dog photo" -o ./assets
+fetchr "cat photo" "dog photo" -o ./assets
 
 # Combine options
-af find "icon set" "ui buttons" -o ./design-assets -y
+fetchr "icon set" "ui buttons" -o ./design-assets -y
 ```
 
 ### Configuration
 
 ```bash
 # Set API keys
-af config set-key gemini YOUR_KEY
-af config set-key serper YOUR_KEY
+fetchr config set-key gemini YOUR_KEY
+fetchr config set-key serper YOUR_KEY
 
 # View current configuration
-af config show
+fetchr config show
 ```
 
 ### Help
 
 ```bash
 # General help
-af --help
+fetchr --help
 
-# Command-specific help
-af find --help
-af config --help
+# Config help
+fetchr config --help
 ```
 
 ## Example Workflow
 
 ```bash
-$ af find "Tesla logo" "SpaceX logo" "Neuralink logo"
+$ fetchr "Tesla logo" "SpaceX logo" "Neuralink logo"
 
     ███████╗███████╗████████╗ ██████╗██╗  ██╗██████╗
     ██╔════╝██╔════╝╚══██╔══╝██╔════╝██║  ██║██╔══██╗

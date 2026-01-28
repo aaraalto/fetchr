@@ -67,10 +67,24 @@ Example for "BMW logo":
 
 Example for "iPhone 15":
 {"query": "iPhone 15 Pro product photo studio white background", "img_size": "large", "img_type": "photo"}
+"#;
 
-User input: "#;
+const PROMPT_SUFFIX: &str = "User input: ";
 
 pub async fn expand_prompt(prompt: &str, config: &Config) -> Result<ExpandedQuery> {
+    // Try to get learning context from feedback history
+    let learning_context = crate::feedback::get_learning_context(3)
+        .unwrap_or(None)
+        .unwrap_or_default();
+
+    expand_prompt_with_context(prompt, config, &learning_context).await
+}
+
+pub async fn expand_prompt_with_context(
+    prompt: &str,
+    config: &Config,
+    learning_context: &str,
+) -> Result<ExpandedQuery> {
     let api_key = config
         .keys
         .gemini
@@ -79,11 +93,18 @@ pub async fn expand_prompt(prompt: &str, config: &Config) -> Result<ExpandedQuer
 
     let client = reqwest::Client::new();
 
+    // Build the full prompt with optional learning context
+    let full_prompt = format!(
+        "{}{}{}{}",
+        PROMPT_TEMPLATE,
+        learning_context,
+        PROMPT_SUFFIX,
+        prompt
+    );
+
     let request = GeminiRequest {
         contents: vec![Content {
-            parts: vec![Part {
-                text: format!("{}{}", PROMPT_TEMPLATE, prompt),
-            }],
+            parts: vec![Part { text: full_prompt }],
         }],
     };
 

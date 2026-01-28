@@ -3,10 +3,12 @@ mod config;
 mod download;
 mod search;
 
+use std::fs;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 
@@ -31,19 +33,39 @@ fn print_banner() {
     println!("    \x1b[90mRetrieve multiple assets at once\x1b[0m\n");
 }
 
+fn parse_comma_separated(input: &str) -> Vec<String> {
+    input
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| s.len() >= 2) // Minimum 2 chars to prevent accidental searches
+        .collect()
+}
+
+fn parse_queries_from_file(path: &PathBuf) -> Result<Vec<String>> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read queries from {}", path.display()))?;
+    Ok(parse_comma_separated(&content))
+}
+
 #[derive(Parser)]
 #[command(name = "fetchr")]
 #[command(about = "AI-powered image asset fetcher - retrieve multiple assets at once")]
 #[command(version = VERSION)]
 struct Cli {
-    /// Asset descriptions (one image will be fetched per query)
+    /// Asset descriptions - comma-separated (no quotes needed)
+    /// Example: fetchr Tesla logo, Apple icon, Nike swoosh
+    #[arg(trailing_var_arg = true)]
     queries: Vec<String>,
+
+    /// Read queries from a text file (comma-separated)
+    #[arg(short = 'f', long = "file")]
+    file: Option<PathBuf>,
 
     /// Output directory
     #[arg(short, long, default_value = "downloads")]
     output: String,
 
-    /// Skip confirmation and download immediately
+    /// Skip confirmation prompts
     #[arg(short = 'y', long)]
     yes: bool,
 
@@ -88,13 +110,23 @@ async fn main() -> Result<()> {
             }
         },
         None => {
-            if cli.queries.is_empty() {
+            print_banner();
+
+            // Collect queries from file, CLI args, or interactive mode
+            let queries = if let Some(file_path) = &cli.file {
+                parse_queries_from_file(file_path)?
+            } else if !cli.queries.is_empty() {
+                // Join all args and split by comma (no quotes needed)
+                parse_comma_separated(&cli.queries.join(" "))
+            } else {
+                Vec::new()
+            };
+
+            if queries.is_empty() {
                 // Interactive mode
-                print_banner();
                 interactive_mode(&cli.output).await?;
             } else {
-                print_banner();
-                cmd_find(&cli.queries, &cli.output, cli.yes).await?;
+                cmd_find(&queries, &cli.output, cli.yes).await?;
             }
         }
     }
@@ -110,14 +142,10 @@ async fn interactive_mode(output: &str) -> Result<()> {
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
 
-    let queries: Vec<String> = input
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let queries = parse_comma_separated(&input);
 
     if queries.is_empty() {
-        println!("\n  No queries entered. Exiting.");
+        println!("\n  No valid queries entered (min 2 characters each). Exiting.");
         return Ok(());
     }
 
@@ -156,11 +184,32 @@ fn truncate_title(title: &str, max_len: usize) -> String {
 async fn cmd_find(queries: &[String], output: &str, yes: bool) -> Result<()> {
     let cfg = config::load()?;
 
+    // Show queries and confirm before searching (API calls cost money)
     println!(
-        "  \x1b[1mSearching for {} asset{}\x1b[0m\n",
+        "  \x1b[1mReady to search for {} asset{}:\x1b[0m\n",
         queries.len(),
         if queries.len() == 1 { "" } else { "s" }
     );
+
+    for (i, query) in queries.iter().enumerate() {
+        println!("  \x1b[36m{:>2}.\x1b[0m {}", i + 1, query);
+    }
+    println!();
+
+    if !yes {
+        print!("  Proceed with search? \x1b[90m[Y/n]\x1b[0m ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+
+        if !input.is_empty() && input != "y" && input != "yes" {
+            println!("\n  Cancelled.");
+            return Ok(());
+        }
+        println!();
+    }
 
     let mut all_results = Vec::new();
 

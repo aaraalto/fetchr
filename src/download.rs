@@ -1,15 +1,35 @@
 use anyhow::{Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::search::ImageResult;
 
-pub async fn download_images(images: &[ImageResult], output_dir: &str) -> Result<()> {
+/// Get the default download directory (system Downloads/fetchr)
+pub fn get_download_dir() -> Result<PathBuf> {
+    let downloads = dirs::download_dir()
+        .context("Could not find system Downloads directory")?;
+    Ok(downloads.join("fetchr"))
+}
+
+/// Sanitize a string to be safe for use as a filename
+fn sanitize_filename(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+pub async fn download_images(images: &[ImageResult], output_dir: &Path) -> Result<()> {
     // Create output directory
     fs::create_dir_all(output_dir)
         .await
-        .with_context(|| format!("Failed to create output directory: {}", output_dir))?;
+        .with_context(|| format!("Failed to create output directory: {}", output_dir.display()))?;
 
     let multi_progress = MultiProgress::new();
     let style = ProgressStyle::default_bar()
@@ -29,7 +49,7 @@ pub async fn download_images(images: &[ImageResult], output_dir: &str) -> Result
 
         let client = client.clone();
         let image = image.clone();
-        let output_dir = output_dir.to_string();
+        let output_dir = output_dir.to_path_buf();
 
         let handle = tokio::spawn(async move {
             let result = download_single(&client, &image, &output_dir, &pb).await;
@@ -65,7 +85,7 @@ pub async fn download_images(images: &[ImageResult], output_dir: &str) -> Result
 async fn download_single(
     client: &reqwest::Client,
     image: &ImageResult,
-    output_dir: &str,
+    output_dir: &Path,
     pb: &ProgressBar,
 ) -> Result<()> {
     let response = client
@@ -89,8 +109,11 @@ async fn download_single(
         .next()
         .filter(|e| ["jpg", "jpeg", "png", "gif", "webp", "svg"].contains(&e.to_lowercase().as_str()))
         .unwrap_or("jpg");
-    let filename = format!("{}.{}", image.id, ext);
-    let filepath = Path::new(output_dir).join(&filename);
+
+    // Use sanitized source query as filename
+    let base_name = sanitize_filename(&image.source_query);
+    let filename = format!("{}.{}", base_name, ext);
+    let filepath = output_dir.join(&filename);
 
     fs::write(&filepath, &bytes)
         .await

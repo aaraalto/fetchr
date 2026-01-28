@@ -3,6 +3,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::ai::ExpandedQuery;
 use crate::config::Config;
 
 const MAX_RETRIES: u32 = 3;
@@ -14,12 +15,18 @@ pub struct ImageResult {
     pub download_url: String,
     pub width: u32,
     pub height: u32,
+    pub source_query: String,
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SerperRequest {
     q: String,
     num: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    img_size: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    img_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,7 +44,8 @@ struct SerperImage {
 }
 
 pub async fn search_images(
-    queries: &[String],
+    expanded: &ExpandedQuery,
+    original_query: &str,
     limit: usize,
     config: &Config,
 ) -> Result<Vec<ImageResult>> {
@@ -48,75 +56,60 @@ pub async fn search_images(
         .context("Serper API key not set. Run: fetchr config set-key serper <KEY>")?;
 
     let client = reqwest::Client::new();
-    let mut all_results: Vec<ImageResult> = Vec::new();
-    let mut seen_urls = std::collections::HashSet::new();
 
-    let per_query_limit = (limit / queries.len()).max(1);
+    let request = SerperRequest {
+        q: expanded.query.clone(),
+        num: limit.min(10),
+        img_size: expanded.img_size.clone(),
+        img_type: expanded.img_type.clone(),
+    };
 
-    for query in queries {
-        let request = SerperRequest {
-            q: query.clone(),
-            num: per_query_limit.min(10),
-        };
+    let search_response = retry_request(MAX_RETRIES, || async {
+        let response = client
+            .post("https://google.serper.dev/images")
+            .header("X-API-KEY", api_key)
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .with_context(|| format!("Failed to search Serper for: {}", expanded.query))?;
 
-        let search_response = retry_request(MAX_RETRIES, || async {
-            let response = client
-                .post("https://google.serper.dev/images")
-                .header("X-API-KEY", api_key)
-                .header("Content-Type", "application/json")
-                .json(&request)
-                .send()
-                .await
-                .with_context(|| format!("Failed to search Serper for: {}", query))?;
-
-            let status = response.status();
-            if is_rate_limit_status(status) {
-                let body = response.text().await.unwrap_or_default();
-                anyhow::bail!("rate_limit: Serper API error ({}): {}", status, body);
-            }
-
-            if !status.is_success() {
-                let body = response.text().await.unwrap_or_default();
-                anyhow::bail!("Serper API error ({}): {}", status, body);
-            }
-
-            let search_response: SerperResponse = response
-                .json()
-                .await
-                .context("Failed to parse Serper response")?;
-
-            Ok(search_response)
-        })
-        .await?;
-
-        if let Some(images) = search_response.images {
-            for image in images {
-                // Deduplicate by URL
-                if seen_urls.contains(&image.image_url) {
-                    continue;
-                }
-                seen_urls.insert(image.image_url.clone());
-
-                all_results.push(ImageResult {
-                    id: format!("{:x}", simple_hash(&image.image_url)),
-                    title: image.title,
-                    download_url: image.image_url,
-                    width: image.image_width.unwrap_or(0),
-                    height: image.image_height.unwrap_or(0),
-                });
-
-                if all_results.len() >= limit {
-                    break;
-                }
-            }
+        let status = response.status();
+        if is_rate_limit_status(status) {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("rate_limit: Serper API error ({}): {}", status, body);
         }
 
-        if all_results.len() >= limit {
-            break;
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Serper API error ({}): {}", status, body);
+        }
+
+        let search_response: SerperResponse = response
+            .json()
+            .await
+            .context("Failed to parse Serper response")?;
+
+        Ok(search_response)
+    })
+    .await?;
+
+    let mut results: Vec<ImageResult> = Vec::new();
+
+    if let Some(images) = search_response.images {
+        for image in images.into_iter().take(limit) {
+            results.push(ImageResult {
+                id: format!("{:x}", simple_hash(&image.image_url)),
+                title: image.title,
+                download_url: image.image_url,
+                width: image.image_width.unwrap_or(0),
+                height: image.image_height.unwrap_or(0),
+                source_query: original_query.to_string(),
+            });
         }
     }
 
-    Ok(all_results)
+    Ok(results)
 }
 
 fn simple_hash(input: &str) -> u64 {

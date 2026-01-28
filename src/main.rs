@@ -61,10 +61,6 @@ struct Cli {
     #[arg(short = 'f', long = "file")]
     file: Option<PathBuf>,
 
-    /// Output directory
-    #[arg(short, long, default_value = "downloads")]
-    output: String,
-
     /// Skip confirmation prompts
     #[arg(short = 'y', long)]
     yes: bool,
@@ -124,9 +120,9 @@ async fn main() -> Result<()> {
 
             if queries.is_empty() {
                 // Interactive mode
-                interactive_mode(&cli.output).await?;
+                interactive_mode().await?;
             } else {
-                cmd_find(&queries, &cli.output, cli.yes).await?;
+                cmd_find(&queries, cli.yes).await?;
             }
         }
     }
@@ -134,7 +130,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn interactive_mode(output: &str) -> Result<()> {
+async fn interactive_mode() -> Result<()> {
     println!("  \x1b[1mEnter assets to fetch (comma-separated):\x1b[0m");
     print!("  \x1b[36m>\x1b[0m ");
     io::stdout().flush()?;
@@ -150,7 +146,7 @@ async fn interactive_mode(output: &str) -> Result<()> {
     }
 
     println!();
-    cmd_find(&queries, output, false).await
+    cmd_find(&queries, false).await
 }
 
 fn create_spinner(msg: &str) -> ProgressBar {
@@ -181,8 +177,9 @@ fn truncate_title(title: &str, max_len: usize) -> String {
     }
 }
 
-async fn cmd_find(queries: &[String], output: &str, yes: bool) -> Result<()> {
+async fn cmd_find(queries: &[String], yes: bool) -> Result<()> {
     let cfg = config::load()?;
+    let output_dir = download::get_download_dir()?;
 
     // Show queries and confirm before searching (API calls cost money)
     println!(
@@ -216,36 +213,51 @@ async fn cmd_find(queries: &[String], output: &str, yes: bool) -> Result<()> {
     for (i, query) in queries.iter().enumerate() {
         // Step 1: AI expansion for this query
         let spinner = create_spinner(&format!(
-            "[{}/{}] Expanding \"{}\"...",
+            "[{}/{}] Optimizing \"{}\"...",
             i + 1,
             queries.len(),
             truncate_title(query, 30)
         ));
-        let search_queries = ai::expand_prompt(query, &cfg).await?;
+        let expanded = ai::expand_prompt(query, &cfg).await?;
+        let filter_info = match (&expanded.img_size, &expanded.img_type) {
+            (Some(s), Some(t)) => format!(" [{}:{}]", s, t),
+            (Some(s), None) => format!(" [{}]", s),
+            (None, Some(t)) => format!(" [{}]", t),
+            (None, None) => String::new(),
+        };
         spinner.finish_with_message(format!(
-            "\x1b[32m✓\x1b[0m [{}/{}] Generated {} search queries for \"{}\"",
+            "\x1b[32m✓\x1b[0m [{}/{}] Query: \"{}\"{}",
             i + 1,
             queries.len(),
-            search_queries.len(),
-            truncate_title(query, 30)
+            truncate_title(&expanded.query, 40),
+            filter_info
         ));
 
-        // Step 2: Search and get the best image (limit=1)
+        // Step 2: Search and get the best image (fetch top 3 for fallback)
         let spinner = create_spinner(&format!(
             "[{}/{}] Finding best match...",
             i + 1,
             queries.len()
         ));
-        let results = search::search_images(&search_queries, 1, &cfg).await?;
+        let results = search::search_images(&expanded, query, 3, &cfg).await?;
 
-        if let Some(result) = results.into_iter().next() {
+        // Try to find a valid image (HEAD check for availability)
+        let mut found_result = None;
+        for result in results {
+            if check_url_available(&result.download_url).await {
+                found_result = Some(result);
+                break;
+            }
+        }
+
+        if let Some(result) = found_result {
             spinner.finish_with_message(format!(
                 "\x1b[32m✓\x1b[0m [{}/{}] Found: {}",
                 i + 1,
                 queries.len(),
                 truncate_title(&result.title, 45)
             ));
-            all_results.push((query.clone(), result));
+            all_results.push(result);
         } else {
             spinner.finish_with_message(format!(
                 "\x1b[33m!\x1b[0m [{}/{}] No results for \"{}\"",
@@ -264,11 +276,11 @@ async fn cmd_find(queries: &[String], output: &str, yes: bool) -> Result<()> {
 
     println!("\n  \x1b[1mFound {} image{}:\x1b[0m\n", all_results.len(), if all_results.len() == 1 { "" } else { "s" });
 
-    for (i, (query, result)) in all_results.iter().enumerate() {
+    for (i, result) in all_results.iter().enumerate() {
         println!(
             "  \x1b[36m{:>2}.\x1b[0m \x1b[1m{}\x1b[0m",
             i + 1,
-            truncate_title(query, 50)
+            truncate_title(&result.source_query, 50)
         );
         println!(
             "      {} · \x1b[4m{}\x1b[0m",
@@ -297,15 +309,23 @@ async fn cmd_find(queries: &[String], output: &str, yes: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Step 5: Download
+    // Step 5: Download to system Downloads/fetchr folder
     println!();
-    let images: Vec<_> = all_results.iter().map(|(_, r)| r.clone()).collect();
-    download::download_images(&images, output).await?;
+    download::download_images(&all_results, &output_dir).await?;
     println!("\n  \x1b[32m✓\x1b[0m Done! {} image{} saved to \x1b[1m{}\x1b[0m",
-        images.len(),
-        if images.len() == 1 { "" } else { "s" },
-        output
+        all_results.len(),
+        if all_results.len() == 1 { "" } else { "s" },
+        output_dir.display()
     );
 
     Ok(())
+}
+
+/// Quick HEAD request to check if a URL is accessible
+async fn check_url_available(url: &str) -> bool {
+    let client = reqwest::Client::new();
+    match client.head(url).send().await {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => false,
+    }
 }

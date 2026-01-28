@@ -32,20 +32,45 @@ struct Candidate {
     content: Content,
 }
 
-const PROMPT_TEMPLATE: &str = r#"You are an AI Asset Scout. Your task is to take a user's short input and expand it into optimized search queries for image search engines.
+/// Structured response from Gemini with query and Serper filters
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExpandedQuery {
+    pub query: String,
+    #[serde(default)]
+    pub img_size: Option<String>,
+    #[serde(default)]
+    pub img_type: Option<String>,
+}
 
-Rules:
-1. Identify the object (e.g., Braun Player, BMW Logo)
-2. Identify the category (Logo, Product, Architecture, Icon, etc.)
-3. Generate 3 search queries that include technical modifiers like 'high-res', 'transparent PNG', 'SVG vector', 'white background', or 'studio lighting'
-4. If the input is a brand, prioritize official logos and current brand identity
+const PROMPT_TEMPLATE: &str = r#"You are an AI Asset Scout. Your task is to take a user's short input and create ONE highly optimized search query with appropriate image filters.
 
-Respond with ONLY a JSON array of 3 search strings, no other text.
-Example: ["BMW official logo SVG transparent", "BMW 2024 roundel logo high-res png", "BMW brand guidelines logo"]
+Analyze the input and determine:
+1. What the user wants (logo, product photo, icon, artwork, etc.)
+2. The best single search query that will find a high-quality, relevant image
+3. The appropriate Serper image filters
+
+Available filters:
+- img_size: "large" (high-res photos/products), "medium" (general use), "icon" (small icons/favicons)
+- img_type: "photo" (real photographs), "clipart" (logos, icons, vector-style), "lineart" (simple drawings), "face" (portraits)
+
+Guidelines:
+- For LOGOS/BRANDS: Use img_type "clipart", include "official", "transparent", "vector" or "SVG" in query
+- For PRODUCTS: Use img_type "photo", img_size "large", include "studio", "product shot", "white background"
+- For ICONS: Use img_size "icon" or "medium", img_type "clipart"
+- For PHOTOS/SCENES: Use img_type "photo", img_size "large"
+
+Respond with ONLY a JSON object (no markdown, no extra text):
+{"query": "your optimized search query", "img_size": "large|medium|icon|null", "img_type": "photo|clipart|lineart|face|null"}
+
+Example for "BMW logo":
+{"query": "BMW official logo transparent SVG vector", "img_size": "large", "img_type": "clipart"}
+
+Example for "iPhone 15":
+{"query": "iPhone 15 Pro product photo studio white background", "img_size": "large", "img_type": "photo"}
 
 User input: "#;
 
-pub async fn expand_prompt(prompt: &str, config: &Config) -> Result<Vec<String>> {
+pub async fn expand_prompt(prompt: &str, config: &Config) -> Result<ExpandedQuery> {
     let api_key = config
         .keys
         .gemini
@@ -114,11 +139,11 @@ pub async fn expand_prompt(prompt: &str, config: &Config) -> Result<Vec<String>>
         .trim_end_matches("```")
         .trim();
 
-    // Parse the JSON array from the response
-    let queries: Vec<String> = serde_json::from_str(content)
-        .with_context(|| format!("Failed to parse AI response as JSON array: {}", content))?;
+    // Parse the JSON object from the response
+    let expanded: ExpandedQuery = serde_json::from_str(content)
+        .with_context(|| format!("Failed to parse AI response as JSON: {}", content))?;
 
-    Ok(queries)
+    Ok(expanded)
 }
 
 fn is_rate_limit_status(status: reqwest::StatusCode) -> bool {

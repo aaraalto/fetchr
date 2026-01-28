@@ -66,7 +66,18 @@ export SERPER_API_KEY=your_serper_key
 
 ## Common Commands
 
-### Fetch Images
+### Interactive Mode
+
+```bash
+# Start interactive mode
+run fetchr
+
+# You'll see the banner and a prompt:
+# > Enter assets to fetch (comma-separated):
+# > Tesla logo, Apple logo, Nike swoosh
+```
+
+### Direct Commands
 
 ```bash
 # Fetch a single asset

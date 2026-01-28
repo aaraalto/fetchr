@@ -37,7 +37,6 @@ fn print_banner() {
 #[command(version = VERSION)]
 struct Cli {
     /// Asset descriptions (one image will be fetched per query)
-    #[arg(required_unless_present = "command")]
     queries: Vec<String>,
 
     /// Output directory
@@ -90,16 +89,40 @@ async fn main() -> Result<()> {
         },
         None => {
             if cli.queries.is_empty() {
-                println!("Usage: fetchr <QUERIES>... [-o <OUTPUT>] [-y]");
-                println!("\nRun 'fetchr --help' for more information.");
-                return Ok(());
+                // Interactive mode
+                print_banner();
+                interactive_mode(&cli.output).await?;
+            } else {
+                print_banner();
+                cmd_find(&cli.queries, &cli.output, cli.yes).await?;
             }
-            print_banner();
-            cmd_find(&cli.queries, &cli.output, cli.yes).await?;
         }
     }
 
     Ok(())
+}
+
+async fn interactive_mode(output: &str) -> Result<()> {
+    println!("  \x1b[1mEnter assets to fetch (comma-separated):\x1b[0m");
+    print!("  \x1b[36m>\x1b[0m ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+
+    let queries: Vec<String> = input
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if queries.is_empty() {
+        println!("\n  No queries entered. Exiting.");
+        return Ok(());
+    }
+
+    println!();
+    cmd_find(&queries, output, false).await
 }
 
 fn create_spinner(msg: &str) -> ProgressBar {

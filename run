@@ -1,0 +1,12 @@
+#!/bin/bash
+# Fetchr launcher script
+# Usage: ./run fetchr [args...]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ "$1" = "fetchr" ]; then
+    shift
+    exec "$SCRIPT_DIR/target/release/fetchr" "$@"
+else
+    exec "$SCRIPT_DIR/target/release/fetchr" "$@"
+fi

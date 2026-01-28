@@ -58,13 +58,11 @@ impl AutoSession {
 /// Evaluate if an image result meets quality thresholds
 pub fn evaluate_result(result: &ImageResult, _query: &str) -> Option<FailureReason> {
     // Check for minimum dimensions (icons should be at least 32x32, others 100x100)
-    if result.width > 0 && result.height > 0 {
-        if result.width < 32 || result.height < 32 {
-            return Some(FailureReason::ImageTooSmall {
-                width: result.width,
-                height: result.height,
-            });
-        }
+    if result.width > 0 && result.height > 0 && (result.width < 32 || result.height < 32) {
+        return Some(FailureReason::ImageTooSmall {
+            width: result.width,
+            height: result.height,
+        });
     }
     None
 }

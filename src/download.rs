@@ -45,7 +45,7 @@ pub async fn download_images(images: &[ImageResult], output_dir: &Path) -> Resul
     for image in images {
         let pb = multi_progress.add(ProgressBar::new(100));
         pb.set_style(style.clone());
-        pb.set_message(format!("{}", &image.id[..8.min(image.id.len())]));
+        pb.set_message(image.id[..8.min(image.id.len())].to_string());
 
         let client = client.clone();
         let image = image.clone();

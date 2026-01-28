@@ -79,9 +79,11 @@ pub async fn reformulate_query(
 ) -> Result<ExpandedQuery> {
     // Build a hint based on the failure reason
     let hint = match failure {
-        FailureReason::NoResults => "try alternative keywords or broader terms",
-        FailureReason::AllUrlsUnavailable => "try different image sources",
-        FailureReason::ImageTooSmall { .. } => "look for higher resolution images",
+        FailureReason::NoResults => "try alternative keywords or broader terms".to_string(),
+        FailureReason::AllUrlsUnavailable => "try different image sources".to_string(),
+        FailureReason::ImageTooSmall { width, height } => {
+            format!("look for higher resolution images (was {}x{})", width, height)
+        }
     };
 
     // Create a reformulation prompt
@@ -131,7 +133,10 @@ pub async fn find_with_retry(
             continue;
         }
 
-        // Try each result
+        // Try each result, tracking why we reject them
+        let mut had_quality_failure = false;
+        let mut quality_failure: Option<FailureReason> = None;
+
         for result in results {
             // Check quality
             if let Some(failure) = evaluate_result(&result, query) {
@@ -142,7 +147,8 @@ pub async fn find_with_retry(
                         &format!("image too small: {}x{}", result.width, result.height),
                     );
                 }
-                last_failure = Some(failure);
+                had_quality_failure = true;
+                quality_failure = Some(failure);
                 continue;
             }
 
@@ -152,14 +158,17 @@ pub async fn find_with_retry(
                     session.log(query, "found", &format!("selected: {}", result.title));
                 }
                 return Ok(Some((result, expanded)));
-            } else {
-                if verbose {
-                    session.log(query, "url unavailable", &result.download_url);
-                }
+            } else if verbose {
+                session.log(query, "url unavailable", &result.download_url);
             }
         }
 
-        last_failure = Some(FailureReason::AllUrlsUnavailable);
+        // Use quality failure if that was the issue, otherwise URLs were the problem
+        last_failure = if had_quality_failure {
+            quality_failure
+        } else {
+            Some(FailureReason::AllUrlsUnavailable)
+        };
         last_expanded = Some(expanded);
 
         if verbose {

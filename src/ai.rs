@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use crate::errors;
 
 const MAX_RETRIES: u32 = 3;
 
@@ -114,22 +115,20 @@ pub async fn expand_prompt_with_context(
     );
 
     let gemini_response = retry_request(MAX_RETRIES, || async {
-        let response = client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .context("Failed to call Gemini API")?;
+        let response = match client.post(&url).json(&request).send().await {
+            Ok(r) => r,
+            Err(e) => anyhow::bail!("{}", errors::format_network_error("Gemini", &e)),
+        };
 
         let status = response.status();
         if is_rate_limit_status(status) {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("rate_limit: Gemini API error ({}): {}", status, body);
+            anyhow::bail!("rate_limit: {}", errors::format_api_error("Gemini", status, &body));
         }
 
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Gemini API error ({}): {}", status, body);
+            anyhow::bail!("{}", errors::format_api_error("Gemini", status, &body));
         }
 
         let gemini_response: GeminiResponse = response

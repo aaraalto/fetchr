@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ai::ExpandedQuery;
 use crate::config::Config;
+use crate::errors;
 
 const MAX_RETRIES: u32 = 3;
 
@@ -65,24 +66,27 @@ pub async fn search_images(
     };
 
     let search_response = retry_request(MAX_RETRIES, || async {
-        let response = client
+        let response = match client
             .post("https://google.serper.dev/images")
             .header("X-API-KEY", api_key)
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
             .await
-            .with_context(|| format!("Failed to search Serper for: {}", expanded.query))?;
+        {
+            Ok(r) => r,
+            Err(e) => anyhow::bail!("{}", errors::format_network_error("Serper", &e)),
+        };
 
         let status = response.status();
         if is_rate_limit_status(status) {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("rate_limit: Serper API error ({}): {}", status, body);
+            anyhow::bail!("rate_limit: {}", errors::format_api_error("Serper", status, &body));
         }
 
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Serper API error ({}): {}", status, body);
+            anyhow::bail!("{}", errors::format_api_error("Serper", status, &body));
         }
 
         let search_response: SerperResponse = response

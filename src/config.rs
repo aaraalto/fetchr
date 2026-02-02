@@ -76,8 +76,17 @@ pub fn save(config: &Config) -> Result<()> {
     let content = toml::to_string_pretty(config)
         .context("Failed to serialize config")?;
 
-    fs::write(&path, content)
+    fs::write(&path, &content)
         .with_context(|| format!("Failed to write config to {:?}", path))?;
+
+    // Set restrictive permissions on config file (contains API keys)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(&path, permissions)
+            .with_context(|| "Failed to set config file permissions")?;
+    }
 
     Ok(())
 }
@@ -95,9 +104,19 @@ pub fn set_key(provider: &str, key: &str) -> Result<()> {
     Ok(())
 }
 
+/// Replace home directory with ~ for cleaner display
+fn shorten_path(path: &std::path::Path) -> String {
+    if let Some(home) = dirs::home_dir() {
+        if let Ok(relative) = path.strip_prefix(&home) {
+            return format!("~/{}", relative.display());
+        }
+    }
+    path.display().to_string()
+}
+
 pub fn show() -> Result<()> {
     let path = config_path()?;
-    println!("Config file: {:?}", path);
+    println!("Config file: {}", shorten_path(&path));
 
     let config = load()?;
 

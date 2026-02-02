@@ -2,6 +2,7 @@ mod ai;
 mod auto;
 mod config;
 mod download;
+mod errors;
 mod feedback;
 mod search;
 
@@ -249,6 +250,41 @@ fn truncate_title(title: &str, max_len: usize) -> String {
     }
 }
 
+/// Replace home directory with ~ for cleaner display
+fn shorten_path(path: &std::path::Path) -> String {
+    if let Some(home) = dirs::home_dir() {
+        if let Ok(relative) = path.strip_prefix(&home) {
+            return format!("~/{}", relative.display());
+        }
+    }
+    path.display().to_string()
+}
+
+/// Truncate URL for display: show domain + abbreviated path
+fn truncate_url(url: &str, max_len: usize) -> String {
+    if url.len() <= max_len {
+        return url.to_string();
+    }
+
+    // Try to parse and show domain + truncated path
+    if let Some(domain_end) = url.find("://").map(|i| i + 3) {
+        if let Some(path_start) = url[domain_end..].find('/') {
+            let domain = &url[..domain_end + path_start];
+            let path = &url[domain_end + path_start..];
+
+            let available = max_len.saturating_sub(domain.len() + 4); // 4 for "/..."
+            if available > 8 && path.len() > available {
+                // Show last part of path
+                let suffix = &path[path.len().saturating_sub(available)..];
+                return format!("{}/...{}", domain, suffix);
+            }
+        }
+    }
+
+    // Fallback: just truncate
+    format!("{}...", &url[..max_len.saturating_sub(3)])
+}
+
 /// Stores info needed for feedback after download
 struct DownloadedImageInfo {
     result: search::ImageResult,
@@ -433,7 +469,7 @@ async fn cmd_find(queries: &[String], opts: &FindOptions) -> Result<()> {
         println!(
             "      {} · \x1b[4m{}\x1b[0m",
             format_dimensions(info.result.width, info.result.height),
-            info.result.download_url
+            truncate_url(&info.result.download_url, 60)
         );
         println!();
     }
@@ -464,7 +500,7 @@ async fn cmd_find(queries: &[String], opts: &FindOptions) -> Result<()> {
     println!("\n  \x1b[32m✓\x1b[0m Done! {} image{} saved to \x1b[1m{}\x1b[0m",
         all_results.len(),
         if all_results.len() == 1 { "" } else { "s" },
-        output_dir.display()
+        shorten_path(&output_dir)
     );
 
     // Step 6: Prompt for ratings if enabled
@@ -523,7 +559,10 @@ async fn prompt_for_ratings(results: &[DownloadedImageInfo]) -> Result<()> {
 
 /// Quick HEAD request to check if a URL is accessible
 async fn check_url_available(url: &str) -> bool {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     match client.head(url).send().await {
         Ok(resp) => resp.status().is_success(),
         Err(_) => false,

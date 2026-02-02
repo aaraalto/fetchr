@@ -95,7 +95,16 @@ async fn download_single(
         .context("Failed to start download")?;
 
     if !response.status().is_success() {
-        anyhow::bail!("Download failed with status: {}", response.status());
+        let status = response.status();
+        let hint = match status.as_u16() {
+            403 => "Image may be protected or hotlink-blocked",
+            404 => "Image no longer exists at this URL",
+            410 => "Image has been permanently removed",
+            429 => "Too many download requests, try again later",
+            500..=599 => "Image server is having issues",
+            _ => "Could not download image",
+        };
+        anyhow::bail!("⚠️ Download failed (HTTP {}): {}", status.as_u16(), hint);
     }
 
     let bytes = response.bytes().await.context("Failed to read image data")?;
